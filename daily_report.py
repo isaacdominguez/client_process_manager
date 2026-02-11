@@ -72,12 +72,28 @@ class DailyReportOrchestrator:
         print("1️⃣  Connecting to database...")
         self.db = get_db_connection()
         
+        # Log retriever
+        print("2️⃣  Setting up log retriever...")
+        logs_dir = os.getenv('LOGS_DIR')
+        if logs_dir and os.path.exists(logs_dir):
+            try:
+                from log_retriever import LogRetriever
+                self.log_retriever = LogRetriever(logs_dir)
+                print(f"   ✅ Log retriever configured: {logs_dir}")
+            except Exception as e:
+                print(f"   ⚠️  Could not initialize log retriever: {e}")
+                self.log_retriever = None
+        else:
+            print(f"   ⚠️  LOGS_DIR not configured or not accessible: {logs_dir}")
+            print("   ℹ️  Failed process logs will not be included")
+            self.log_retriever = None
+        
         # OneDrive manager
-        print("2️⃣  Connecting to OneDrive...")
+        print("3️⃣  Connecting to OneDrive...")
         self.onedrive_manager = OneDriveManager()
         
         # Email generator
-        print("3️⃣  Setting up email generator...")
+        print("4️⃣  Setting up email generator...")
         self.email_generator = EmailReportGenerator()
         
         print("\n✅ All components initialized\n")
@@ -108,7 +124,7 @@ class DailyReportOrchestrator:
         return all_processes, categorized
     
     def process_failed_processes(self, failed_processes: List[Dict]) -> Dict[str, Any]:
-        """Process all failed processes (log retrieval disabled for now)"""
+        """Process all failed processes: retrieve logs if available"""
         print("\n" + "=" * 80)
         print("❌ PROCESSING FAILED PROCESSES")
         print("=" * 80 + "\n")
@@ -117,22 +133,30 @@ class DailyReportOrchestrator:
             print("✅ No failed processes found!")
             return {}
         
-        print(f"⚠️  Found {len(failed_processes)} failed process(es)")
-        print("ℹ️  Log retrieval is disabled - will report basic info only\n")
+        print(f"⚠️  Found {len(failed_processes)} failed process(es)\n")
         
-        # Return basic info without log extraction
-        failed_info = {}
-        for process in failed_processes:
-            process_uuid = process['process_uuid']
-            failed_info[process_uuid] = {
-                'found': False,
-                'log_file': None,
-                'summary': 'Log retrieval not configured',
-                'saved_path': None
-            }
-            print(f"   📝 {process['name']} - {process_uuid}")
+        # If log retriever is available, get logs
+        if self.log_retriever:
+            print("📝 Retrieving error logs...")
+            failed_logs = self.log_retriever.get_failed_process_logs(
+                failed_processes,
+                output_dir=self.output_dir / "failed_logs"
+            )
+        else:
+            print("ℹ️  Log retrieval not configured - reporting basic info only\n")
+            # Return basic info without log extraction
+            failed_logs = {}
+            for process in failed_processes:
+                process_uuid = process['process_uuid']
+                failed_logs[process_uuid] = {
+                    'found': False,
+                    'log_file': None,
+                    'summary': 'Log retrieval not configured',
+                    'saved_path': None
+                }
+                print(f"   📝 {process['name']} - {process_uuid}")
         
-        return failed_info
+        return failed_logs
     
     def process_finished_processes(self, finished_processes: List[Dict]) -> Dict[str, Any]:
         """Process all finished processes: get OneDrive links"""

@@ -20,27 +20,53 @@ class LogRetriever:
     def find_log_file(self, process_uuid: str, start_time: datetime) -> Optional[Path]:
         """
         Find the log file for a specific process UUID
-        Searches for files containing the process UUID or matching the date
+        Log file pattern: YYYY-MM-DDTHH-MM-SS_perception_api.log
+        
+        Strategy:
+        1. Find log files from the same date as start_time
+        2. Check if they contain the process_uuid
         """
-        # Try common log file patterns
-        patterns = [
-            f"*{process_uuid}*.log",
-            f"*{process_uuid}*.log.gz",
-            f"app_{start_time.strftime('%Y-%m-%d')}*.log",
-            f"process_{start_time.strftime('%Y%m%d')}*.log",
-        ]
+        # Format the date for log file matching
+        # Logs use: 2026-02-06T03-08-14_perception_api.log
+        date_str = start_time.strftime('%Y-%m-%d')
         
-        for pattern in patterns:
-            matches = list(self.logs_dir.glob(pattern))
-            if matches:
-                return matches[0]  # Return first match
+        print(f"   Searching for logs from {date_str}...")
         
-        # If no specific file found, search in all log files from that day
-        date_pattern = f"*{start_time.strftime('%Y-%m-%d')}*.log*"
-        for log_file in self.logs_dir.glob(date_pattern):
+        # Find all log files from that date
+        pattern = f"{date_str}T*_perception_api.log"
+        matching_files = list(self.logs_dir.glob(pattern))
+        
+        if not matching_files:
+            print(f"   ⚠️  No log files found matching pattern: {pattern}")
+            return None
+        
+        print(f"   Found {len(matching_files)} log file(s) from {date_str}")
+        
+        # Search each file for the process UUID
+        for log_file in sorted(matching_files):
+            # Parse log file timestamp to check if it's around the start_time
+            try:
+                # Extract timestamp from filename: 2026-02-06T03-08-14
+                filename = log_file.stem  # Remove .log extension
+                timestamp_str = filename.split('_')[0]  # Get the datetime part
+                log_time = datetime.strptime(timestamp_str, '%Y-%m-%dT%H-%M-%S')
+                
+                # Only check files that started before or around the process start time
+                # (with 1 hour buffer)
+                time_diff = (start_time - log_time).total_seconds()
+                if time_diff < -3600 or time_diff > 86400:  # -1h to +24h window
+                    continue
+                
+            except Exception as e:
+                print(f"   Warning: Could not parse timestamp from {log_file.name}: {e}")
+                # Still check the file if we can't parse the timestamp
+            
+            # Check if this log file contains the process UUID
             if self._contains_uuid(log_file, process_uuid):
+                print(f"   ✅ Found log file: {log_file.name}")
                 return log_file
         
+        print(f"   ⚠️  Process UUID {process_uuid} not found in any log files")
         return None
     
     def _contains_uuid(self, log_file: Path, process_uuid: str) -> bool:
